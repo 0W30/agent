@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   stack-trace-resolver:
     build:
@@ -10,9 +8,10 @@ services:
       - "${API_PORT:-8003}:8000"
     environment:
       # OpenRouter API ключ (используется для эмбеддингов и LLM)
+      # Установите через .env файл или переменную окружения
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-text-embedding-ada-002}
-      - OPENROUTER_LLM_MODEL=${OPENROUTER_LLM_MODEL:-qwen3-vl-30b-a3b-thinking}
+      - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-ada-002}
+      - OPENROUTER_LLM_MODEL=${OPENROUTER_LLM_MODEL:-qwen/qwen-2.5-72b-instruct}
       
       # Настройки векторной базы
       - VECTOR_STORE_PATH=${VECTOR_STORE_PATH:-/app/vector_store}
@@ -25,6 +24,8 @@ services:
       - ./vector_store:/app/vector_store
       # Сохраняем логи
       - ./logs:/app/logs
+      # Сохраняем клонированные репозитории
+      - ./cloned_repos:/app/cloned_repos
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

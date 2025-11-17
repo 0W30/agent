@@ -43,6 +43,9 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 
+# Requirements (будет копироваться в Docker)
+# requirements.txt
+
 # Environment
 .env
 .env.local

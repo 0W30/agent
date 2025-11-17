@@ -13,7 +13,7 @@ env/
 
 # Project-specific
 vector_store/
-cloned_repo/
+cloned_repos/
 logs/
 *.log
 

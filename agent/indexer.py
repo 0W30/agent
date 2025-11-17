@@ -6,7 +6,7 @@ try:
 except ImportError:
     from langchain.schema import Document
 
-from logger_config import get_logger
+from agent.logger_config import get_logger
 
 logger = get_logger(__name__)
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from git import Repo, GitCommandError, InvalidGitRepositoryError
 
-from logger_config import get_logger
+from agent.logger_config import get_logger
 
 logger = get_logger(__name__)
 

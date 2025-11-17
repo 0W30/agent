@@ -4,12 +4,13 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from logger_config import setup_logging, get_logger
-from vecstore import load_vector_store, create_vector_store
-from repo_downloader import clone_repo
-from indexer import extract_python_files
+from agent.logger_config import setup_logging, get_logger
+from agent.vecstore import load_vector_store, create_vector_store
+from agent.repo_downloader import clone_repo
+from agent.indexer import extract_python_files
+from agent.resolver import resolve_error
 
 # Настраиваем логирование при импорте модуля
 setup_logging(
@@ -56,8 +57,28 @@ app = FastAPI(
 
 
 class StackTraceRequest(BaseModel):
-    """Модель запроса для обработки stack trace."""
-    trace: str
+    """Модель запроса для обработки stack trace.
+    
+    Принимает объект с полями:
+    - stacktrace: обязательное поле со stack trace
+    - message: опциональное поле с сообщением об ошибке
+    - exception_type: опциональное поле с типом исключения
+    - exception_value: опциональное поле со значением исключения
+    """
+    stacktrace: str = Field(..., description="Stack trace в виде строки")
+    message: Optional[str] = Field(None, description="Сообщение об ошибке")
+    exception_type: Optional[str] = Field(None, description="Тип исключения")
+    exception_value: Optional[str] = Field(None, description="Значение исключения")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "stacktrace": "File \"test.py\", line 42, in function_name\n    code here",
+                "message": "TypeError: unsupported operand type",
+                "exception_type": "TypeError",
+                "exception_value": "unsupported operand type"
+            }
+        }
 
 
 class StackTraceResponse(BaseModel):
@@ -81,6 +102,12 @@ class CloneRepoResponse(BaseModel):
     vector_store_path: str = None
 
 
+class PromptRequest(BaseModel):
+    """Модель запроса для обработки с кастомным промптом."""
+    trace: str
+    prompt: Optional[str] = None  # Опциональный кастомный промпт
+
+
 @app.post("/resolve", response_model=StackTraceResponse)
 async def resolve_stack_trace(request: StackTraceRequest):
     """
@@ -93,22 +120,40 @@ async def resolve_stack_trace(request: StackTraceRequest):
         StackTraceResponse: Ответ с объяснением и предложением исправления от LLM
     """
     logger.info("Получен запрос на обработку stack trace")
-    if not request.trace:
-        logger.warning("Получен запрос с пустым полем 'trace'")
-        raise HTTPException(status_code=400, detail="Поле 'trace' не может быть пустым")
+    
+    if not request.stacktrace or not request.stacktrace.strip():
+        logger.warning("Получен запрос с пустым полем 'stacktrace'")
+        raise HTTPException(status_code=400, detail="Поле 'stacktrace' не может быть пустым")
+    
+    # Формируем полный trace с информацией об ошибке
+    trace_parts = []
+    
+    # Добавляем информацию об ошибке, если есть
+    if request.exception_type and request.exception_value:
+        trace_parts.append(f"{request.exception_type}: {request.exception_value}")
+    elif request.message:
+        trace_parts.append(request.message)
+    elif request.exception_type:
+        trace_parts.append(request.exception_type)
+    
+    # Добавляем stacktrace
+    trace_parts.append(request.stacktrace)
+    
+    # Объединяем все части
+    full_trace = "\n".join(trace_parts)
     
     # Проверяем, что векторная база загружена
     if _vector_store is None:
         logger.error("Попытка обработать запрос при незагруженной векторной базе")
         raise HTTPException(
             status_code=500,
-            detail="Векторная база данных не загружена. Проверьте логи при старте приложения."
+            detail="Векторная база данных не загружена. Используйте /clone для её создания."
         )
     
     try:
         # Используем resolve_error для обработки stack trace
-        logger.debug(f"Длина stack trace: {len(request.trace)} символов")
-        answer = resolve_error(trace=request.trace, vector_store=_vector_store)
+        logger.debug(f"Длина stack trace: {len(full_trace)} символов")
+        answer = resolve_error(trace=full_trace, vector_store=_vector_store)
         logger.info("Stack trace успешно обработан")
         return StackTraceResponse(answer=answer)
     except Exception as e:
@@ -199,16 +244,4 @@ async def health_check():
     }
 
 
-if __name__ == "__main__":
-    import uvicorn
-    
-    host = os.getenv("API_HOST", "0.0.0.0")
-    port = int(os.getenv("API_PORT", "8000"))
-    
-    logger.info(f"Запуск API сервера на {host}:{port}")
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level=os.getenv("LOG_LEVEL", "info").lower()
-    )
+# Точка входа вынесена в main.py в корне проекта

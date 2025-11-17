@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Копируем файлы зависимостей
-COPY pyproject.toml ./
+COPY requirements.txt ./
 
-# Устанавливаем зависимости
+# Устанавливаем зависимости через pip
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e .
+    pip install --no-cache-dir -r requirements.txt
 
 # Финальный образ
 FROM python:3.11-slim
@@ -28,8 +28,11 @@ RUN apt-get update && apt-get install -y \
 
 # Создаём пользователя для безопасности
 RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app /app/logs /app/vector_store && \
-    chown -R appuser:appuser /app
+    mkdir -p /app /app/logs /app/vector_store /app/cloned_repos && \
+    chown -R appuser:appuser /app && \
+    chmod -R 755 /app/logs && \
+    chmod -R 755 /app/vector_store && \
+    chmod -R 755 /app/cloned_repos
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
@@ -53,5 +56,4 @@ ENV VECTOR_STORE_PATH=/app/vector_store
 ENV LOG_FILE=/app/logs/app.log
 
 # Команда запуска
-CMD ["python", "api.py"]
-
+CMD ["python", "main.py"]

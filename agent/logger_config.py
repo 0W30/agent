@@ -42,13 +42,17 @@ def setup_logging(
     
     # Если указан файл, добавляем файловый обработчик
     if log_file:
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(numeric_level)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
+        try:
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setLevel(numeric_level)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+        except (PermissionError, OSError) as e:
+            # Если не можем записать в файл, используем только консольный handler
+            root_logger.warning(f"Не удалось создать файловый handler для логов: {e}. Используется только консольный вывод.")
     
     # Настраиваем логирование для внешних библиотек
     logging.getLogger("httpx").setLevel(logging.WARNING)
