@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  stack-trace-resolver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stack-trace-resolver
+    ports:
+      - "${API_PORT:-8003}:8000"
+    environment:
+      # OpenRouter API ключ (используется для эмбеддингов и LLM)
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-text-embedding-ada-002}
+      - OPENROUTER_LLM_MODEL=${OPENROUTER_LLM_MODEL:-qwen3-vl-30b-a3b-thinking}
+      
+      # Настройки векторной базы
+      - VECTOR_STORE_PATH=${VECTOR_STORE_PATH:-/app/vector_store}
+      
+      # Настройки логирования
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=${LOG_FILE:-/app/logs/app.log}
+    volumes:
+      # Сохраняем векторную базу данных
+      - ./vector_store:/app/vector_store
+      # Сохраняем логи
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - stack-trace-network
+
+networks:
+  stack-trace-network:
+    driver: bridge
+
