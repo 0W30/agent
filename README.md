@@ -188,6 +188,30 @@ API будет доступен по адресу: `http://localhost:8000`
 
 ### 4. Использование API
 
+#### Клонирование репозитория и создание векторной базы
+
+```bash
+curl -X POST "http://localhost:8000/clone" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ssh_url": "git@github.com:user/repo.git",
+    "branch": "main"
+  }'
+```
+
+Ответ:
+```json
+{
+  "success": true,
+  "message": "Репозиторий успешно клонирован и проиндексирован. Создана векторная база из 42 файлов.",
+  "repo_path": "/app/cloned_repos/repo",
+  "files_indexed": 42,
+  "vector_store_path": "./vector_store"
+}
+```
+
+#### Разрешение ошибки из stack trace
+
 ```bash
 curl -X POST "http://localhost:8000/resolve" \
   -H "Content-Type: application/json" \
@@ -234,8 +258,11 @@ curl -X POST "http://localhost:8000/resolve" \
 - `resolve_error(trace, vector_store)` - полный pipeline разрешения ошибки
 
 ### `api.py`
-- FastAPI приложение с endpoint `/resolve`
-- Автоматическая загрузка векторной базы при старте
+- FastAPI приложение с endpoints:
+  - `POST /clone` - клонирование репозитория, индексация и создание векторной базы
+  - `POST /resolve` - разрешение ошибки из stack trace
+  - `GET /health` - проверка здоровья API
+- Автоматическая загрузка векторной базы при старте (если существует)
 
 ## Логирование
 
