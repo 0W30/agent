@@ -20,12 +20,14 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE=${LOG_FILE:-/app/logs/app.log}
     volumes:
-      # Сохраняем векторную базу данных
-      - ./vector_store:/app/vector_store
-      # Сохраняем логи
-      - ./logs:/app/logs
-      # Сохраняем клонированные репозитории
-      - ./cloned_repos:/app/cloned_repos
+             # Сохраняем векторную базу данных
+             - ./vector_store:/app/vector_store
+             # Сохраняем логи
+             - ./logs:/app/logs
+             # Сохраняем клонированные репозитории
+             - ./cloned_repos:/app/cloned_repos
+             # SSH ключи (для приватных репозиториев, опционально)
+             - ~/.ssh:/home/appuser/.ssh:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

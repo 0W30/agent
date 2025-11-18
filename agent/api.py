@@ -21,32 +21,15 @@ setup_logging(
 logger = get_logger(__name__)
 
 
-# Глобальная переменная для векторной базы
-_vector_store = None
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Загружает векторную базу данных при старте приложения (если существует)."""
-    global _vector_store
-    
-    # Пытаемся загрузить векторную базу при старте (если существует)
-    vector_store_path = os.getenv("VECTOR_STORE_PATH", "./vector_store")
-    
-    logger.info("Запуск приложения, попытка загрузки векторной базы данных...")
-    try:
-        _vector_store = load_vector_store(path=vector_store_path)
-        logger.info(f"Векторная база данных успешно загружена из {vector_store_path}")
-    except Exception as e:
-        logger.warning(f"Векторная база данных не найдена или не может быть загружена: {e}")
-        logger.info("Используйте endpoint /clone для создания векторной базы из репозитория")
-        _vector_store = None
-    
+    """Инициализация приложения."""
+    logger.info("Запуск приложения Stack Trace Resolver...")
+    logger.info("Используйте endpoint /clone для создания векторных баз по проектам")
+
     yield
-    
-    # Очистка при завершении (если нужно)
+
     logger.info("Завершение работы приложения")
-    _vector_store = None
 
 
 app = FastAPI(
@@ -58,22 +41,25 @@ app = FastAPI(
 
 class StackTraceRequest(BaseModel):
     """Модель запроса для обработки stack trace.
-    
+
     Принимает объект с полями:
     - stacktrace: обязательное поле со stack trace
+    - project_name: обязательное поле с именем проекта
     - message: опциональное поле с сообщением об ошибке
     - exception_type: опциональное поле с типом исключения
     - exception_value: опциональное поле со значением исключения
     """
     stacktrace: str = Field(..., description="Stack trace в виде строки")
+    project_name: str = Field(..., description="Имя проекта для поиска релевантных документов")
     message: Optional[str] = Field(None, description="Сообщение об ошибке")
     exception_type: Optional[str] = Field(None, description="Тип исключения")
     exception_value: Optional[str] = Field(None, description="Значение исключения")
-    
+
     class Config:
         json_schema_extra = {
             "example": {
                 "stacktrace": "File \"test.py\", line 42, in function_name\n    code here",
+                "project_name": "my-project",
                 "message": "TypeError: unsupported operand type",
                 "exception_type": "TypeError",
                 "exception_value": "unsupported operand type"
@@ -88,9 +74,19 @@ class StackTraceResponse(BaseModel):
 
 class CloneRepoRequest(BaseModel):
     """Модель запроса для клонирования репозитория."""
-    ssh_url: str
+    url: str = Field(..., description="SSH или HTTPS URL репозитория")
     branch: str = "main"
+    project_name: str = Field(..., description="Уникальное имя проекта для группировки векторов")
     target_dir: Optional[str] = None  # Если не указан, будет сгенерирован автоматически
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "url": "git@github.com:user/repo.git",
+                "branch": "main",
+                "project_name": "my-project"
+            }
+        }
 
 
 class CloneRepoResponse(BaseModel):
@@ -124,6 +120,10 @@ async def resolve_stack_trace(request: StackTraceRequest):
     if not request.stacktrace or not request.stacktrace.strip():
         logger.warning("Получен запрос с пустым полем 'stacktrace'")
         raise HTTPException(status_code=400, detail="Поле 'stacktrace' не может быть пустым")
+
+    if not request.project_name:
+        logger.warning("Получен запрос с пустым полем 'project_name'")
+        raise HTTPException(status_code=400, detail="Поле 'project_name' не может быть пустым")
     
     # Формируем полный trace с информацией об ошибке
     trace_parts = []
@@ -142,18 +142,22 @@ async def resolve_stack_trace(request: StackTraceRequest):
     # Объединяем все части
     full_trace = "\n".join(trace_parts)
     
-    # Проверяем, что векторная база загружена
-    if _vector_store is None:
-        logger.error("Попытка обработать запрос при незагруженной векторной базе")
+    # Загружаем векторную базу для указанного проекта
+    project_vector_store_path = f"./vector_store/{request.project_name}"
+    try:
+        project_vector_store = load_vector_store(path=project_vector_store_path)
+        logger.info(f"Загружена векторная база проекта '{request.project_name}'")
+    except (ValueError, FileNotFoundError):
+        logger.error(f"Векторная база для проекта '{request.project_name}' не найдена")
         raise HTTPException(
-            status_code=500,
-            detail="Векторная база данных не загружена. Используйте /clone для её создания."
+            status_code=404,
+            detail=f"Векторная база для проекта '{request.project_name}' не найдена. Сначала клонируйте проект с помощью /clone."
         )
     
     try:
         # Используем resolve_error для обработки stack trace
         logger.debug(f"Длина stack trace: {len(full_trace)} символов")
-        answer = resolve_error(trace=full_trace, vector_store=_vector_store)
+        answer = resolve_error(trace=full_trace, vector_store=project_vector_store)
         logger.info("Stack trace успешно обработан")
         return StackTraceResponse(answer=answer)
     except Exception as e:
@@ -177,23 +181,32 @@ async def clone_repository(request: CloneRepoRequest):
     """
     global _vector_store
     
-    logger.info(f"Получен запрос на клонирование репозитория: {request.ssh_url}, ветка: {request.branch}")
-    
-    if not request.ssh_url:
-        logger.warning("Получен запрос с пустым SSH URL")
-        raise HTTPException(status_code=400, detail="Поле 'ssh_url' не может быть пустым")
-    
+    logger.info(f"Получен запрос на клонирование репозитория: {request.url}, ветка: {request.branch}")
+
+    if not request.url:
+        logger.warning("Получен запрос с пустым URL")
+        raise HTTPException(status_code=400, detail="Поле 'url' не может быть пустым")
+
+    if not request.project_name:
+        logger.warning("Получен запрос с пустым именем проекта")
+        raise HTTPException(status_code=400, detail="Поле 'project_name' не может быть пустым")
+
     try:
         # Генерируем путь для клонирования, если не указан
         if not request.target_dir:
-            # Используем имя репозитория из SSH URL
-            repo_name = request.ssh_url.split("/")[-1].replace(".git", "")
+            # Извлекаем имя репозитория из URL (работает для SSH и HTTPS)
+            if request.url.startswith('git@'):
+                # SSH URL: git@github.com:user/repo.git -> repo
+                repo_name = request.url.split(':')[-1].replace('.git', '')
+            else:
+                # HTTPS URL: https://github.com/user/repo.git -> repo
+                repo_name = request.url.split('/')[-1].replace('.git', '')
             request.target_dir = f"./cloned_repos/{repo_name}"
-        
+
         # Клонируем репозиторий
         logger.info(f"Клонирование репозитория в {request.target_dir}")
         repo_path = clone_repo(
-            ssh_url=request.ssh_url,
+            url=request.url,
             branch=request.branch,
             target_dir=request.target_dir
         )
@@ -213,11 +226,12 @@ async def clone_repository(request: CloneRepoRequest):
                 files_indexed=0
             )
         
-        # Создаём векторную базу
-        vector_store_path = os.getenv("VECTOR_STORE_PATH", "./vector_store")
-        logger.info(f"Создание векторной базы в {vector_store_path}")
-        _vector_store = create_vector_store(docs=documents, path=vector_store_path)
-        logger.info("Векторная база успешно создана")
+        # Создаём векторную базу для этого проекта
+        base_path = os.getenv("VECTOR_STORE_PATH", "./vector_store")
+        vector_store_path = f"{base_path}/{request.project_name}"
+        logger.info(f"Создание векторной базы для проекта '{request.project_name}' в {vector_store_path}")
+        project_vector_store = create_vector_store(docs=documents, path=vector_store_path)
+        logger.info(f"Векторная база проекта '{request.project_name}' успешно создана")
         
         return CloneRepoResponse(
             success=True,
@@ -235,13 +249,11 @@ async def clone_repository(request: CloneRepoRequest):
         )
 
 
+
 @app.get("/health")
 async def health_check():
     """Проверка здоровья API."""
-    return {
-        "status": "ok",
-        "vector_store_loaded": _vector_store is not None
-    }
+    return {"status": "ok"}
 
 
 # Точка входа вынесена в main.py в корне проекта

@@ -28,11 +28,12 @@ RUN apt-get update && apt-get install -y \
 
 # Создаём пользователя для безопасности
 RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app /app/logs /app/vector_store /app/cloned_repos && \
-    chown -R appuser:appuser /app && \
+    mkdir -p /app /app/logs /app/vector_store /app/cloned_repos /home/appuser/.ssh && \
+    chown -R appuser:appuser /app /home/appuser/.ssh && \
     chmod -R 755 /app/logs && \
     chmod -R 755 /app/vector_store && \
-    chmod -R 755 /app/cloned_repos
+    chmod -R 755 /app/cloned_repos && \
+    chmod 700 /home/appuser/.ssh
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
@@ -47,6 +48,11 @@ COPY --chown=appuser:appuser . .
 # Переключаемся на непривилегированного пользователя
 USER appuser
 
+# Настраиваем known_hosts для публичных репозиториев
+RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts && \
+    ssh-keyscan -H gitlab.com >> ~/.ssh/known_hosts && \
+    chmod 600 ~/.ssh/known_hosts
+
 # Открываем порт
 EXPOSE 8000
 
@@ -55,5 +61,5 @@ ENV LOG_LEVEL=INFO
 ENV VECTOR_STORE_PATH=/app/vector_store
 ENV LOG_FILE=/app/logs/app.log
 
-# Команда запуска
+# Запускаем приложение
 CMD ["python", "main.py"]

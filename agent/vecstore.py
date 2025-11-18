@@ -245,6 +245,50 @@ def create_vector_store(docs: list[Document], path: str = "./vector_store") -> F
     return vector_store
 
 
+def add_documents_to_vector_store(docs: list[Document], vector_store: FAISS, path: str = "./vector_store") -> FAISS:
+    """
+    Добавляет документы к существующей векторной базе данных FAISS.
+    
+    Args:
+        docs: Список документов LangChain для добавления
+        vector_store: Существующая векторная база данных FAISS
+        path: Путь для сохранения обновлённой векторной базы
+        
+    Returns:
+        FAISS: Обновлённый объект векторной базы данных
+    """
+    if not docs:
+        logger.warning("Список документов для добавления пуст")
+        return vector_store
+    
+    logger.info(f"Добавление {len(docs)} документов к существующей векторной базе")
+    
+    try:
+        # Добавляем документы к существующей базе
+        vector_store.add_documents(docs)
+        logger.info(f"Документы успешно добавлены к векторной базе")
+        
+        # Сохраняем обновлённую векторную базу
+        path = Path(path)
+        if path.exists():
+            try:
+                os.chmod(path, 0o777)
+            except (OSError, PermissionError):
+                pass
+        
+        try:
+            vector_store.save_local(str(path))
+            logger.info(f"Обновлённая векторная база сохранена в {path}")
+        except (OSError, PermissionError, RuntimeError) as e:
+            logger.error(f"Ошибка при сохранении обновлённой векторной базы: {e}")
+            raise
+        
+        return vector_store
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении документов к векторной базе: {e}", exc_info=True)
+        raise
+
+
 def load_vector_store(path: str = "./vector_store") -> FAISS:
     """
     Загружает существующую векторную базу данных FAISS.

@@ -31,32 +31,26 @@ except ImportError:
 def parse_stack_trace(trace: str) -> List[Dict[str, Any]]:
     """
     Парсит stack trace и извлекает пути файлов и номера строк.
-    
+
     Args:
         trace: Сырая строка stack trace
-        
+
     Returns:
         List[Dict[str, any]]: Список словарей с ключами 'file' (str) и 'line' (int или None)
     """
+    logger.debug("Начало парсинга stack trace")
+
     # Паттерн для поиска путей файлов и номеров строк
     # Примеры: File "/path/to/file.py", line 42
     #          File "/path/to/file.py", line 42, in function_name
     #          File "/path/to/file.py", line ?
-    #          File "/path/to/file.py", line 42
-    logger.debug("Начало парсинга stack trace")
-    
-    # Паттерн 1: File "path", line 42 или line ?
     pattern1 = r'File\s+["\']([^"\']+)["\']\s*,\s*line\s+(\d+|\?)'
-    
-    # Паттерн 2: File "path", line 42, in function (более строгий)
     pattern2 = r'File\s+["\']([^"\']+)["\']\s*,\s*line\s+(\d+|\?)\s*,'
-    
-    # Паттерн 3: Просто путь к файлу без "File" (для других форматов)
     pattern3 = r'["\']([^"\']+\.py)["\']'
-    
+
     extracted_info = []
     seen_files = set()
-    
+
     # Сначала ищем по основным паттернам
     for pattern in [pattern1, pattern2]:
         matches = re.findall(pattern, trace, re.MULTILINE)
@@ -64,16 +58,20 @@ def parse_stack_trace(trace: str) -> List[Dict[str, Any]]:
         for file_path, line_num in matches:
             file_path_obj = Path(file_path)
             file_name = file_path_obj.name
+
             if file_name not in seen_files:
                 seen_files.add(file_name)
                 # Преобразуем номер строки: ? -> None, иначе int
                 line = None if line_num == '?' else int(line_num)
+                # Сохраняем полный путь для точного сопоставления
                 extracted_info.append({
                     "file": file_name,
-                    "line": line
+                    "line": line,
+                    "full_path": file_path,  # Полный путь из stack trace
+                    "file_path": str(file_path_obj)  # Нормализованный путь
                 })
-                logger.debug(f"Извлечён файл: {file_name}, строка: {line_num}")
-    
+                logger.debug(f"Извлечён файл: {file_name}, строка: {line_num}, путь: {file_path}")
+
     # Если ничего не нашли, пробуем найти просто файлы .py
     if not extracted_info:
         logger.debug("Основные паттерны не нашли совпадений, пробуем найти .py файлы")
@@ -81,59 +79,143 @@ def parse_stack_trace(trace: str) -> List[Dict[str, Any]]:
         for file_path in py_files:
             file_path_obj = Path(file_path)
             file_name = file_path_obj.name
+
             if file_name not in seen_files and file_name.endswith('.py'):
                 seen_files.add(file_name)
                 extracted_info.append({
                     "file": file_name,
-                    "line": None
+                    "line": None,
+                    "full_path": file_path,  # Полный путь из stack trace
+                    "file_path": str(file_path_obj)  # Нормализованный путь
                 })
-                logger.debug(f"Извлечён файл (без номера строки): {file_name}")
-    
+                logger.debug(f"Извлечён файл (без номера строки): {file_name}, путь: {file_path}")
+
     logger.info(f"Парсинг завершён: извлечено {len(extracted_info)} файлов")
     return extracted_info
 
 
 def get_relevant_docs(stack_info: List[Dict[str, Any]], vector_store: FAISS) -> List[Document]:
     """
-    Получает релевантные документы из векторной базы по каждому файлу из stack trace.
-    
+    Получает релевантные документы из векторной базы проекта по каждому файлу из stack trace.
+    Использует гибридный подход: точное сопоставление по пути + semantic search.
+
     Args:
-        stack_info: Результат parse_stack_trace - список словарей с 'file' и 'line'
-        vector_store: Векторная база данных FAISS
-        
+        stack_info: Результат parse_stack_trace - список словарей с 'file', 'line', 'full_path'
+        vector_store: Векторная база данных FAISS для конкретного проекта
+
     Returns:
-        List[Document]: Объединённый список релевантных документов без дублей
+        List[Document]: Объединённый список релевантных документов без дублей, отсортированный по релевантности
     """
-    logger.info(f"Поиск релевантных документов для {len(stack_info)} файлов")
+    logger.info(f"Поиск релевантных документов для {len(stack_info)} файлов в проекте")
+
     all_documents = []
-    seen_docs = set()  # Для отслеживания дублей по содержимому
+    seen_doc_paths = set()  # Для отслеживания дублей по пути файла
+    exact_matches = []  # Точные совпадения (приоритет)
+    semantic_matches = []  # Semantic search результаты (дополнительно)
+
+    # Собираем все уникальные имена файлов и путей для оптимизации поиска
+    file_names = [info.get("file", "") for info in stack_info]
+    file_paths_map = {info.get("file", ""): info.get("full_path", "") for info in stack_info}
     
+    # Шаг 1: Точное сопоставление по пути файла
+    # Делаем один большой поиск для всех файлов сразу (оптимизация)
+    all_candidates = []  # Используем список вместо set, так как Document не хешируемы
+    seen_candidate_ids = set()  # Отслеживаем дубли по пути файла
+    search_query = " ".join(set(file_names))  # Объединяем все имена файлов для одного поиска
+    if search_query:
+        candidates = vector_store.similarity_search(search_query, k=min(100, len(file_names) * 10))
+        for candidate in candidates:
+            # Используем путь файла как уникальный идентификатор
+            candidate_id = candidate.metadata.get("file_path", candidate.metadata.get("path", ""))
+            if candidate_id not in seen_candidate_ids:
+                seen_candidate_ids.add(candidate_id)
+                all_candidates.append(candidate)
+    
+    # Фильтруем кандидатов по точному совпадению пути
     for info in stack_info:
-        file_name = info["file"]
-        logger.debug(f"Поиск документов для файла: {file_name}")
+        file_name = info.get("file", "")
+        full_path = info.get("full_path", "")
         
-        # Ищем top_k=5 документов по similarity_search
-        results = vector_store.similarity_search(file_name, k=5)
-        logger.debug(f"Найдено {len(results)} документов для {file_name}")
+        logger.debug(f"Точный поиск для файла: {file_name} (путь: {full_path})")
         
-        # Добавляем документы, избегая дублей
-        for doc in results:
-            # Создаём уникальный идентификатор на основе содержимого и пути
-            doc_id = (doc.metadata.get("path", ""), doc.page_content[:100])  # Первые 100 символов для идентификации
-            if doc_id not in seen_docs:
-                seen_docs.add(doc_id)
-                all_documents.append(doc)
+        # Ищем точное совпадение среди кандидатов
+        found_exact = False
+        for doc in all_candidates:
+            doc_path = doc.metadata.get("file_path", "")
+            doc_name = doc.metadata.get("path", "")
+            
+            # Проверяем точное совпадение по разным вариантам пути
+            is_exact_match = False
+            
+            if full_path:
+                # Сравниваем по полному пути (нормализуем для сравнения)
+                full_path_normalized = str(Path(full_path)).replace("\\", "/").lower()
+                doc_path_normalized = str(Path(doc_path)).replace("\\", "/").lower()
+                # Проверяем, заканчивается ли один путь другим
+                if (full_path_normalized.endswith(doc_path_normalized) or 
+                    doc_path_normalized.endswith(full_path_normalized) or
+                    full_path_normalized in doc_path_normalized or
+                    doc_path_normalized in full_path_normalized):
+                    is_exact_match = True
+            
+            # Также проверяем по имени файла
+            if not is_exact_match:
+                if doc_name == file_name:
+                    is_exact_match = True
+                # Проверяем, заканчивается ли путь файлом
+                elif doc_path and file_name:
+                    doc_path_normalized = str(Path(doc_path)).replace("\\", "/").lower()
+                    if doc_path_normalized.endswith(file_name.lower()):
+                        is_exact_match = True
+            
+            if is_exact_match:
+                doc_id = doc.metadata.get("file_path", doc.metadata.get("path", ""))
+                if doc_id not in seen_doc_paths:
+                    seen_doc_paths.add(doc_id)
+                    exact_matches.append((doc, 1.0))  # Максимальная релевантность для точных совпадений
+                    found_exact = True
+                    logger.debug(f"Точное совпадение: {doc_path}")
+        
+        # Если не нашли точного совпадения, используем semantic search для этого конкретного файла
+        if not found_exact:
+            logger.debug(f"Точное совпадение не найдено для {file_name}, используем semantic search")
+            try:
+                semantic_results = vector_store.similarity_search_with_score(file_name, k=3)
+                for doc, score in semantic_results:
+                    doc_id = doc.metadata.get("file_path", doc.metadata.get("path", ""))
+                    if doc_id not in seen_doc_paths:
+                        seen_doc_paths.add(doc_id)
+                        # Нормализуем score (меньше = лучше в FAISS, инвертируем)
+                        normalized_score = 1.0 / (1.0 + score) if score > 0 else 0.5
+                        semantic_matches.append((doc, normalized_score))
+                        logger.debug(f"Semantic match: {doc.metadata.get('file_path')} (score: {score:.3f})")
+            except Exception as e:
+                logger.warning(f"Ошибка при semantic search для {file_name}: {e}")
+                # Fallback на обычный similarity_search
+                fallback_results = vector_store.similarity_search(file_name, k=3)
+                for doc in fallback_results:
+                    doc_id = doc.metadata.get("file_path", doc.metadata.get("path", ""))
+                    if doc_id not in seen_doc_paths:
+                        seen_doc_paths.add(doc_id)
+                        semantic_matches.append((doc, 0.3))  # Низкая релевантность для fallback
+
+    # Объединяем результаты: сначала точные совпадения, потом semantic
+    all_documents = [doc for doc, _ in sorted(exact_matches + semantic_matches, key=lambda x: x[1], reverse=True)]
     
+    logger.info(f"Найдено {len(exact_matches)} точных совпадений и {len(semantic_matches)} semantic совпадений")
     logger.info(f"Всего найдено {len(all_documents)} уникальных документов")
+    
     return all_documents
 
 
-def build_context(docs: List[Document], max_tokens: int = 150000) -> str:
+def build_context(docs: List[Document], stack_info: List[Dict[str, Any]] = None, max_tokens: int = 150000) -> str:
     """
     Склеивает содержимое файлов в один текст с ограничением по токенам.
+    Учитывает номера строк из stack trace для выделения релевантных участков кода.
     
     Args:
         docs: Список документов для объединения
+        stack_info: Информация о файлах и строках из stack trace (опционально)
         max_tokens: Максимальное количество токенов (примерно 4 символа = 1 токен)
         
     Returns:
@@ -142,22 +224,145 @@ def build_context(docs: List[Document], max_tokens: int = 150000) -> str:
     logger.info(f"Построение контекста из {len(docs)} документов, максимум токенов: {max_tokens}")
     max_chars = max_tokens * 4  # Примерная оценка: 4 символа = 1 токен
     
+    # Создаём словарь для быстрого поиска номеров строк по именам файлов
+    file_lines_map = {}
+    if stack_info:
+        for info in stack_info:
+            file_name = info.get("file")
+            line_num = info.get("line")
+            if file_name and line_num is not None:
+                if file_name not in file_lines_map:
+                    file_lines_map[file_name] = []
+                file_lines_map[file_name].append(line_num)
+    
     combined = []
     current_length = 0
     
     for doc in docs:
-        # Формируем строку с содержимым файла
-        file_path = doc.metadata.get("path", "unknown")
-        content = f"=== Файл: {file_path} ===\n{doc.page_content}\n\n"
+        # Получаем имя файла из metadata (может быть полный путь или только имя)
+        file_path_meta = doc.metadata.get("path", "unknown")
+        file_path_relative = doc.metadata.get("file_path", file_path_meta)
+        file_name = Path(file_path_meta).name
+        file_name_relative = Path(file_path_relative).name
+        
+        # Проверяем, является ли документ чанком
+        is_chunk = "chunk_index" in doc.metadata
+        chunk_start = doc.metadata.get("start_line", None)
+        chunk_end = doc.metadata.get("end_line", None)
+        
+        content_lines = doc.page_content.split('\n')
+        
+        # Проверяем, есть ли информация о строках для этого файла
+        # Пробуем найти по имени файла или по относительному пути
+        relevant_lines = file_lines_map.get(file_name, [])
+        if not relevant_lines:
+            relevant_lines = file_lines_map.get(file_name_relative, [])
+        
+        # Также проверяем по полному пути из stack trace (если есть)
+        if not relevant_lines and stack_info:
+            for info in stack_info:
+                full_path = info.get("full_path", "")
+                if full_path:
+                    full_path_name = Path(full_path).name
+                    if full_path_name == file_name or full_path_name == file_name_relative:
+                        line_num = info.get("line")
+                        if line_num is not None:
+                            if not relevant_lines:
+                                relevant_lines = []
+                            relevant_lines.append(line_num)
+        
+        # Если это чанк и есть номера строк, проверяем, попадает ли нужная строка в этот чанк
+        if is_chunk and relevant_lines and chunk_start and chunk_end:
+            # Фильтруем только те строки, которые попадают в диапазон чанка
+            relevant_lines_in_chunk = [
+                line_num for line_num in relevant_lines 
+                if chunk_start <= line_num <= chunk_end
+            ]
+            if relevant_lines_in_chunk:
+                # Нужная строка в этом чанке - используем весь чанк
+                relevant_lines = relevant_lines_in_chunk
+            else:
+                # Нужная строка не в этом чанке, но чанк может быть релевантным через semantic search
+                # Показываем его как дополнительный контекст
+                relevant_lines = []
+        
+        if relevant_lines:
+            # Если это чанк и нужная строка в нём, показываем весь чанк с выделением проблемных строк
+            if is_chunk and chunk_start and chunk_end:
+                # Показываем весь чанк, но выделяем проблемные строки
+                numbered_lines = []
+                for i, line in enumerate(content_lines):
+                    actual_line = chunk_start + i  # Номер строки в файле
+                    marker = ">>> " if actual_line in relevant_lines else "    "
+                    numbered_lines.append(f"{marker}{actual_line:4d} | {line}")
+                
+                display_path = file_path_relative if file_path_relative != "unknown" else file_path_meta
+                chunk_info = f" [чанк {doc.metadata.get('chunk_index', 0) + 1}/{doc.metadata.get('total_chunks', 1)}, строки {chunk_start}-{chunk_end}]"
+                content = f"=== Файл: {display_path}{chunk_info} (строки из stack trace: {', '.join(map(str, relevant_lines))}) ===\n" + "\n".join(numbered_lines) + "\n\n"
+            else:
+                # Если это не чанк или старый формат, выделяем контекст вокруг проблемных строк
+                context_ranges = []
+                for line_num in relevant_lines:
+                    # Берём контекст: 20 строк до и 20 строк после проблемной строки
+                    # line_num - это номер строки (начинается с 1), индексы начинаются с 0
+                    start = max(0, line_num - 1 - 20)  # line_num-1 для индексации с 0, -20 для контекста
+                    end = min(len(content_lines), line_num - 1 + 21)  # line_num-1 + 20 строк после + сама строка
+                    context_ranges.append((start, end, line_num))
+                
+                # Объединяем перекрывающиеся диапазоны
+                if context_ranges:
+                    context_ranges.sort()
+                    merged_ranges = [context_ranges[0]]
+                    for start, end, line_num in context_ranges[1:]:
+                        last_start, last_end, _ = merged_ranges[-1]
+                        if start <= last_end:
+                            # Перекрываются - объединяем
+                            merged_ranges[-1] = (last_start, max(last_end, end), line_num)
+                        else:
+                            merged_ranges.append((start, end, line_num))
+                    
+                    # Формируем контекст с выделением проблемных строк
+                    content_parts = []
+                    for start, end, line_num in merged_ranges:
+                        context_lines = content_lines[start:end]
+                        # Добавляем номера строк и выделяем проблемную строку
+                        numbered_lines = []
+                        for i, line in enumerate(context_lines):
+                            actual_line = start + i + 1  # +1 потому что строки нумеруются с 1
+                            marker = ">>> " if actual_line == line_num else "    "
+                            numbered_lines.append(f"{marker}{actual_line:4d} | {line}")
+                        
+                        content_parts.append("\n".join(numbered_lines))
+                    
+                    display_path = file_path_relative if file_path_relative != "unknown" else file_path_meta
+                    content = f"=== Файл: {display_path} (строки из stack trace: {', '.join(map(str, relevant_lines))}) ===\n" + "\n".join(content_parts) + "\n\n"
+                else:
+                    # context_ranges пуст (не удалось создать диапазоны) - показываем весь файл
+                    display_path = file_path_relative if file_path_relative != "unknown" else file_path_meta
+                    content = f"=== Файл: {display_path} ===\n{doc.page_content}\n\n"
+        else:
+            # Файл не упомянут в stack trace напрямую, но найден через similarity search
+            # Если это чанк, показываем весь чанк, иначе первые 100 строк
+            if is_chunk and chunk_start and chunk_end:
+                # Показываем весь чанк
+                chunk_info = f" [чанк {doc.metadata.get('chunk_index', 0) + 1}/{doc.metadata.get('total_chunks', 1)}, строки {chunk_start}-{chunk_end}]"
+                display_path = file_path_relative if file_path_relative != "unknown" else file_path_meta
+                content = f"=== Файл: {display_path}{chunk_info} (найден через similarity search) ===\n{doc.page_content}\n\n"
+            else:
+                # Показываем начало файла (первые 100 строк)
+                preview_lines = content_lines[:100]
+                if len(content_lines) > 100:
+                    preview_lines.append(f"\n... (файл обрезан, всего {len(content_lines)} строк)")
+                display_path = file_path_relative if file_path_relative != "unknown" else file_path_meta
+                content = f"=== Файл: {display_path} (найден через similarity search, показаны первые 100 строк) ===\n" + "\n".join(preview_lines) + "\n\n"
+        
         content_length = len(content)
         
         # Проверяем, не превысим ли лимит
         if current_length + content_length > max_chars:
-            # Если превышаем, добавляем только часть, которая влезает
             remaining_chars = max_chars - current_length
-            if remaining_chars > 100:  # Добавляем только если осталось достаточно места
-                truncated_content = doc.page_content[:remaining_chars - 50]  # Оставляем запас
-                content = f"=== Файл: {file_path} ===\n{truncated_content}\n\n[файл обрезан]\n\n"
+            if remaining_chars > 100:
+                content = content[:remaining_chars - 50] + "\n\n[контекст обрезан]\n\n"
                 combined.append(content)
             break
         
@@ -194,15 +399,15 @@ def resolve_error(trace: str, vector_store: FAISS, custom_prompt: Optional[str] 
         logger.warning("Не удалось извлечь информацию о файлах из stack trace")
         return "Не удалось извлечь информацию о файлах из stack trace."
     
-    # б) Получаем релевантные документы
+    # б) Получаем релевантные документы (теперь векторная база уже отфильтрована по проекту)
     relevant_docs = get_relevant_docs(stack_info, vector_store)
     
     if not relevant_docs:
         logger.warning("Не найдено релевантных файлов в векторной базе данных")
         return "Не найдено релевантных файлов в векторной базе данных."
     
-    # в) Строим контекст
-    context = build_context(relevant_docs, max_tokens=150000)
+    # в) Строим контекст с учётом номеров строк из stack trace
+    context = build_context(relevant_docs, stack_info=stack_info, max_tokens=150000)
     
     # Системный промпт с инструкциями для агента
     # Если передан кастомный промпт, используем его вместо стандартного

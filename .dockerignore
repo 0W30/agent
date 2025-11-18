@@ -42,6 +42,7 @@ ENV/
 Dockerfile
 docker-compose.yml
 .dockerignore
+docker-entrypoint.sh
 
 # Requirements (будет копироваться в Docker)
 # requirements.txt

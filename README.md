@@ -11,15 +11,17 @@
 ### Процесс работы в два этапа:
 
 1. **Подготовка (POST /clone):**
-   - Клонирует Git-репозиторий по SSH
+   - Клонирует Git-репозиторий по SSH или HTTPS
    - Индексирует все Python-файлы (игнорируя `.git`, `venv`, `node_modules` и т.д.)
-   - Создаёт эмбеддинги для каждого файла через OpenRouter API
-   - Сохраняет векторную базу в FAISS
+   - **Разбивает большие файлы на чанки** (по 500 строк с перекрытием 50 строк)
+   - Создаёт эмбеддинги для каждого чанка через OpenRouter API
+   - Сохраняет векторную базу в FAISS (отдельно для каждого проекта)
 
 2. **Разрешение ошибки (POST /resolve):**
-   - Парсит stack trace и извлекает имена файлов и номера строк
-   - Находит релевантные файлы через векторный поиск (similarity search) в FAISS
-   - Собирает контекст из найденных файлов (до 150k токенов)
+   - Парсит stack trace и извлекает имена файлов, пути и номера строк
+   - **Гибридный поиск**: точное сопоставление по пути + semantic search
+   - Находит релевантные чанки через векторный поиск в FAISS
+   - Собирает оптимизированный контекст с выделением проблемных строк (до 150k токенов)
    - Отправляет ошибку и контекст в LLM через OpenRouter API
    - Получает объяснение ошибки и предложение исправления
 
@@ -227,6 +229,23 @@ uvicorn agent.api:app --reload --host 0.0.0.0 --port 8000
 
 API будет доступен по адресу: `http://localhost:8000`
 
+### Настройка директорий
+
+**Важно:** Создайте директории на хосте перед запуском контейнера:
+
+```bash
+mkdir -p logs vector_store cloned_repos
+chmod -R 777 logs vector_store cloned_repos
+```
+
+Это необходимо для того, чтобы контейнер мог записывать данные в эти директории.
+
+### SSH настройка
+
+Для публичных репозиториев SSH ключи не требуются. Контейнер автоматически настроен для работы с GitHub и GitLab по SSH.
+
+**Для приватных репозиториев:** Если вам нужно клонировать приватные репозитории, добавьте SSH ключи в volume монтирования или настройте их вручную.
+
 ### 4. Использование API
 
 #### Клонирование репозитория и создание векторной базы
@@ -235,19 +254,22 @@ API будет доступен по адресу: `http://localhost:8000`
 curl -X POST "http://localhost:8000/clone" \
   -H "Content-Type: application/json" \
   -d '{
-    "ssh_url": "git@github.com:user/repo.git",
-    "branch": "main"
+    "url": "git@github.com:user/repo.git",
+    "branch": "main",
+    "project_name": "my-project"
   }'
 ```
+
+**Примечание:** API поддерживает SSH и HTTPS URL для клонирования репозиториев.
 
 Ответ:
 ```json
 {
   "success": true,
-  "message": "Репозиторий успешно клонирован и проиндексирован. Создана векторная база из 42 файлов.",
+  "message": "Репозиторий успешно клонирован и проиндексирован. Создана векторная база проекта 'my-project' из 42 файлов.",
   "repo_path": "/app/cloned_repos/repo",
   "files_indexed": 42,
-  "vector_store_path": "./vector_store"
+  "vector_store_path": "./vector_store/my-project"
 }
 ```
 
@@ -257,7 +279,8 @@ curl -X POST "http://localhost:8000/clone" \
 curl -X POST "http://localhost:8000/resolve" \
   -H "Content-Type: application/json" \
   -d '{
-    "trace": "Traceback (most recent call last):\n  File \"test.py\", line 1, in <module>\n    x = 1 / 0\nZeroDivisionError: division by zero"
+    "stacktrace": "Traceback (most recent call last):\n  File \"test.py\", line 1, in <module>\n    x = 1 / 0\nZeroDivisionError: division by zero",
+    "project_name": "my-project"
   }'
 ```
 
