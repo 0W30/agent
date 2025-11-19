@@ -1,4 +1,4 @@
-"""Модуль для индексации Python-файлов из репозитория."""
+"""Модуль для индексации файлов из репозитория."""
 from pathlib import Path
 from typing import List
 
@@ -88,7 +88,7 @@ def split_into_chunks(content: str, chunk_size: int = CHUNK_SIZE, chunk_overlap:
 
 def extract_python_files(repo_path: str) -> list[Document]:
     """
-    Рекурсивно обходит репозиторий и извлекает все Python-файлы.
+    Рекурсивно обходит репозиторий и извлекает все файлы.
     
     Args:
         repo_path: Путь к корню репозитория
@@ -96,7 +96,7 @@ def extract_python_files(repo_path: str) -> list[Document]:
     Returns:
         list[Document]: Список документов LangChain с содержимым файлов
     """
-    logger.info(f"Начало индексации Python-файлов из {repo_path}")
+    logger.info(f"Начало индексации файлов из {repo_path}")
     repo_path = Path(repo_path)
     documents = []
     
@@ -111,7 +111,12 @@ def extract_python_files(repo_path: str) -> list[Document]:
     # Рекурсивно обходим все файлы
     total_files = 0
     ignored_files = 0
-    for file_path in repo_path.rglob("*.py"):
+    skipped_files = 0
+    for file_path in repo_path.rglob("*"):
+        # Пропускаем директории
+        if file_path.is_dir():
+            continue
+        
         total_files += 1
         # Проверяем, нужно ли игнорировать файл
         if should_ignore_path(file_path):
@@ -120,9 +125,15 @@ def extract_python_files(repo_path: str) -> list[Document]:
             continue
         
         try:
-            # Читаем содержимое файла
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+            # Пытаемся прочитать файл как UTF-8 текст
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="strict") as f:
+                    content = f.read()
+            except (UnicodeDecodeError, UnicodeError):
+                # Если не удалось прочитать как UTF-8, пропускаем файл
+                skipped_files += 1
+                logger.debug(f"Пропущен файл (не UTF-8): {file_path}")
+                continue
             
             # Создаём документ LangChain с именем файла и путём к проекту в metadata
             filename = file_path.name
@@ -137,11 +148,13 @@ def extract_python_files(repo_path: str) -> list[Document]:
             chunks = split_into_chunks(content, CHUNK_SIZE, CHUNK_OVERLAP)
             
             # Создаём отдельный документ для каждого чанка
+            file_extension = file_path.suffix  # Расширение файла (.py, .js, .md и т.д.)
             for chunk_idx, (start_line, end_line, chunk_content) in enumerate(chunks):
                 # Формируем metadata с информацией о чанке
                 chunk_metadata = {
                     "path": filename,
                     "file_path": str(relative_path),  # Относительный путь к файлу
+                    "file_extension": file_extension,  # Расширение файла
                     "project_path": str(repo_path),  # Полный путь к проекту
                     "chunk_index": chunk_idx,  # Индекс чанка в файле
                     "start_line": start_line,  # Начальная строка чанка
@@ -163,6 +176,6 @@ def extract_python_files(repo_path: str) -> list[Document]:
             logger.warning(f"Ошибка при чтении файла {file_path}: {e}")
             continue
     
-    logger.info(f"Индексация завершена: найдено {total_files} Python-файлов, "
-                f"проиндексировано {len(documents)}, проигнорировано {ignored_files}")
+    logger.info(f"Индексация завершена: найдено {total_files} файлов, "
+                f"проиндексировано {len(documents)}, проигнорировано {ignored_files}, пропущено {skipped_files}")
     return documents

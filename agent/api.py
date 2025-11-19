@@ -288,16 +288,16 @@ async def clone_repository(request: CloneRepoRequest):
         )
         logger.info(f"Репозиторий успешно клонирован: {repo_path}")
         
-        # Индексируем Python-файлы
-        logger.info("Начало индексации Python-файлов...")
+        # Индексируем файлы
+        logger.info("Начало индексации файлов...")
         documents = extract_python_files(repo_path)
         files_count = len(documents)
-        logger.info(f"Проиндексировано {files_count} Python-файлов")
+        logger.info(f"Проиндексировано {files_count} файлов")
         
         if files_count == 0:
             return CloneRepoResponse(
                 success=False,
-                message="В репозитории не найдено Python-файлов для индексации",
+                message="В репозитории не найдено файлов для индексации",
                 repo_path=repo_path,
                 files_indexed=0
             )
