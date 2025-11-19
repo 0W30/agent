@@ -94,6 +94,10 @@ docker-compose down -v
 | `LOG_LEVEL` | Уровень логирования | Нет | `INFO` |
 | `LOG_FILE` | Путь к файлу логов | Нет | `/app/logs/app.log` |
 | `API_PORT` | Порт API сервера | Нет | `8000` |
+| `YANDEX_TRACKER_TOKEN` | OAuth токен для Яндекс Трекера (обычный режим) | Нет (для интеграции с Трекером) | - |
+| `YANDEX_TRACKER_ORG_ID` | ID организации в Яндекс Трекере (обычный режим) | Нет (для интеграции с Трекером) | - |
+| `YANDEX_TRACKER_IAM_TOKEN` | IAM токен для Яндекс 360 для бизнеса | Нет (для Яндекс 360) | - |
+| `YANDEX_TRACKER_CLOUD_ORG_ID` | Cloud ID организации в Яндекс 360 | Нет (для Яндекс 360) | - |
 
 ### Volumes
 
@@ -126,11 +130,13 @@ chmod -R 777 vector_store logs cloned_repos
 
 ## Возможности
 
-- ✅ Клонирование Git-репозиториев по SSH
-- ✅ Автоматическая индексация Python-файлов
+- ✅ Клонирование Git-репозиториев по SSH или HTTPS
+- ✅ Автоматическая индексация Python-файлов с chunking (разбиение на чанки)
 - ✅ Создание векторных эмбеддингов через OpenRouter API
+- ✅ Гибридный поиск: точное сопоставление + semantic search
 - ✅ Поиск релевантных файлов по stack trace
 - ✅ Генерация объяснений и исправлений через OpenRouter API
+- ✅ Интеграция с Яндекс Трекером для автоматического создания задач
 - ✅ REST API на FastAPI
 - ✅ Профессиональное логирование
 
@@ -284,6 +290,38 @@ curl -X POST "http://localhost:8000/resolve" \
   }'
 ```
 
+Ответ:
+```json
+{
+  "answer": "Объяснение ошибки и предложение исправления...",
+  "tracker_issue_key": null
+}
+```
+
+#### Разрешение ошибки с автоматической отправкой в Яндекс Трекер
+
+```bash
+curl -X POST "http://localhost:8000/resolve" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "stacktrace": "Traceback (most recent call last):\n  File \"test.py\", line 1, in <module>\n    x = 1 / 0\nZeroDivisionError: division by zero",
+    "project_name": "my-project",
+    "message": "ZeroDivisionError: division by zero",
+    "exception_type": "ZeroDivisionError",
+    "send_to_tracker": true,
+    "tracker_queue": "TEST"
+  }'
+```
+
+Ответ:
+```json
+{
+  "answer": "Объяснение ошибки и предложение исправления...",
+  "tracker_issue_key": "TEST-123"
+}
+```
+
+
 ## Структура проекта
 
 ```
@@ -295,7 +333,8 @@ curl -X POST "http://localhost:8000/resolve" \
 │   ├── logger_config.py   # Конфигурация логирования
 │   ├── repo_downloader.py # Клонирование Git-репозиториев
 │   ├── resolver.py        # Разрешение ошибок из stack trace
-│   └── vecstore.py        # Работа с векторной базой FAISS
+│   ├── vecstore.py        # Работа с векторной базой FAISS
+│   └── yandex_tracker.py  # Интеграция с API Яндекс Трекера
 ├── main.py                # Точка входа для запуска сервера
 ├── Dockerfile             # Docker образ
 ├── docker-compose.yml     # Docker Compose конфигурация
@@ -327,9 +366,15 @@ curl -X POST "http://localhost:8000/resolve" \
 ### `agent/api.py`
 - FastAPI приложение с endpoints:
   - `POST /clone` - клонирование репозитория, индексация и создание векторной базы
-  - `POST /resolve` - разрешение ошибки из stack trace
+  - `POST /resolve` - разрешение ошибки из stack trace (с опциональной отправкой в Яндекс Трекер)
   - `GET /health` - проверка здоровья API
 - Автоматическая загрузка векторной базы при старте (если существует)
+
+### `agent/yandex_tracker.py`
+- `YandexTrackerClient` - клиент для работы с API Яндекс Трекера
+- `create_issue()` - создание задачи в Трекере
+- `add_comment()` - добавление комментария к задаче
+- `create_tracker_client()` - создание клиента из переменных окружения
 
 ### `main.py`
 - Точка входа для запуска API сервера
@@ -357,6 +402,10 @@ curl -X POST "http://localhost:8000/resolve" \
 | `VECTOR_STORE_PATH` | Путь к векторной базе | Нет | `./vector_store` |
 | `LOG_LEVEL` | Уровень логирования | Нет | `INFO` |
 | `LOG_FILE` | Путь к файлу логов | Нет | `logs/app.log` |
+| `YANDEX_TRACKER_TOKEN` | OAuth токен для Яндекс Трекера (обычный режим) | Нет (для интеграции с Трекером) | - |
+| `YANDEX_TRACKER_ORG_ID` | ID организации в Яндекс Трекере (обычный режим) | Нет (для интеграции с Трекером) | - |
+| `YANDEX_TRACKER_IAM_TOKEN` | IAM токен для Яндекс 360 для бизнеса | Нет (для Яндекс 360) | - |
+| `YANDEX_TRACKER_CLOUD_ORG_ID` | Cloud ID организации в Яндекс 360 | Нет (для Яндекс 360) | - |
 
 ## Требования
 
@@ -373,6 +422,73 @@ uv pip compile pyproject.toml -o requirements.txt
 ```
 
 Этот файл используется в Dockerfile для установки зависимостей через `pip`.
+
+## Интеграция с Яндекс Трекером
+
+Система поддерживает автоматическую отправку решений в Яндекс Трекер. Это позволяет автоматически создавать задачи для исправления найденных ошибок.
+
+### Настройка
+
+1. **Получите OAuth токен:**
+   - Перейдите в [Яндекс Трекер](https://tracker.yandex.ru)
+   - Настройки → OAuth-токены → Создать токен
+   - Скопируйте токен
+
+2. **Найдите ID организации:**
+   - В настройках организации в Яндекс Трекере
+   - Или используйте API для получения информации об организации
+
+3. **Установите переменные окружения:**
+
+   **Для обычного Яндекс Трекера:**
+   ```bash
+   export YANDEX_TRACKER_TOKEN="ваш-oauth-токен"
+   export YANDEX_TRACKER_ORG_ID="ваш-id-организации"
+   ```
+
+   **Для Яндекс 360 для бизнеса:**
+   ```bash
+   export YANDEX_TRACKER_IAM_TOKEN="ваш-iam-токен"
+   export YANDEX_TRACKER_CLOUD_ORG_ID="ваш-cloud-id-организации"
+   ```
+
+   Или в `.env` файле:
+   ```env
+   # Для обычного Трекера:
+   YANDEX_TRACKER_TOKEN=ваш-oauth-токен
+   YANDEX_TRACKER_ORG_ID=ваш-id-организации
+   
+   # ИЛИ для Яндекс 360:
+   YANDEX_TRACKER_IAM_TOKEN=ваш-iam-токен
+   YANDEX_TRACKER_CLOUD_ORG_ID=ваш-cloud-id-организации
+   ```
+
+   **Примечание:** Используйте либо обычный режим (TOKEN + ORG_ID), либо режим Яндекс 360 (IAM_TOKEN + CLOUD_ORG_ID). Режим Яндекс 360 имеет приоритет, если установлены оба набора переменных.
+
+### Использование
+
+#### Автоматическая отправка при разрешении ошибки
+
+При вызове `/resolve` установите `send_to_tracker: true` и укажите `tracker_queue`:
+
+```json
+{
+  "stacktrace": "...",
+  "project_name": "my-project",
+  "send_to_tracker": true,
+  "tracker_queue": "TEST"
+}
+```
+
+Система автоматически создаст задачу в указанной очереди с:
+- Кратким описанием (summary) на основе типа ошибки
+- Подробным описанием (description) с stack trace и предложенным решением
+- Тегами: `auto-generated`, `stack-trace`, и имя проекта
+
+
+### Документация API Яндекс Трекера
+
+Подробная документация по API доступна на [https://yandex.ru/support/tracker/ru/about-api](https://yandex.ru/support/tracker/ru/about-api)
 
 ## Лицензия
 

@@ -11,6 +11,13 @@ from agent.vecstore import load_vector_store, create_vector_store
 from agent.repo_downloader import clone_repo
 from agent.indexer import extract_python_files
 from agent.resolver import resolve_error
+from agent.yandex_tracker import YandexTrackerClient, create_tracker_client
+
+try:
+    from yandex_tracker_client.exceptions import TrackerError, NotFound
+except ImportError:
+    TrackerError = Exception
+    NotFound = Exception
 
 # Настраиваем логирование при импорте модуля
 setup_logging(
@@ -26,6 +33,13 @@ async def lifespan(app: FastAPI):
     """Инициализация приложения."""
     logger.info("Запуск приложения Stack Trace Resolver...")
     logger.info("Используйте endpoint /clone для создания векторных баз по проектам")
+    
+    # Проверяем настройку Яндекс Трекера
+    tracker_client = create_tracker_client()
+    if tracker_client:
+        logger.info("Яндекс Трекер настроен и готов к использованию")
+    else:
+        logger.info("Яндекс Трекер не настроен (установите YANDEX_TRACKER_TOKEN и YANDEX_TRACKER_ORG_ID)")
 
     yield
 
@@ -48,12 +62,16 @@ class StackTraceRequest(BaseModel):
     - message: опциональное поле с сообщением об ошибке
     - exception_type: опциональное поле с типом исключения
     - exception_value: опциональное поле со значением исключения
+    - send_to_tracker: опциональное поле для автоматической отправки в Яндекс Трекер
+    - tracker_queue: опциональное поле с ключом очереди в Трекере
     """
     stacktrace: str = Field(..., description="Stack trace в виде строки")
     project_name: str = Field(..., description="Имя проекта для поиска релевантных документов")
     message: Optional[str] = Field(None, description="Сообщение об ошибке")
     exception_type: Optional[str] = Field(None, description="Тип исключения")
     exception_value: Optional[str] = Field(None, description="Значение исключения")
+    send_to_tracker: Optional[bool] = Field(False, description="Автоматически отправить решение в Яндекс Трекер")
+    tracker_queue: Optional[str] = Field(None, description="Ключ очереди в Яндекс Трекере (обязательно, если send_to_tracker=True)")
 
     class Config:
         json_schema_extra = {
@@ -62,7 +80,9 @@ class StackTraceRequest(BaseModel):
                 "project_name": "my-project",
                 "message": "TypeError: unsupported operand type",
                 "exception_type": "TypeError",
-                "exception_value": "unsupported operand type"
+                "exception_value": "unsupported operand type",
+                "send_to_tracker": False,
+                "tracker_queue": "TEST"
             }
         }
 
@@ -70,6 +90,7 @@ class StackTraceRequest(BaseModel):
 class StackTraceResponse(BaseModel):
     """Модель ответа с решением ошибки."""
     answer: str
+    tracker_issue_key: Optional[str] = Field(None, description="Ключ созданной задачи в Яндекс Трекере (если была отправка)")
 
 
 class CloneRepoRequest(BaseModel):
@@ -159,7 +180,62 @@ async def resolve_stack_trace(request: StackTraceRequest):
         logger.debug(f"Длина stack trace: {len(full_trace)} символов")
         answer = resolve_error(trace=full_trace, vector_store=project_vector_store)
         logger.info("Stack trace успешно обработан")
-        return StackTraceResponse(answer=answer)
+        
+        # Отправка в Яндекс Трекер, если запрошено
+        tracker_issue_key = None
+        if request.send_to_tracker:
+            if not request.tracker_queue:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Для отправки в Яндекс Трекер необходимо указать tracker_queue"
+                )
+            
+            try:
+                tracker_client = create_tracker_client()
+                if not tracker_client:
+                    logger.warning("Яндекс Трекер не настроен, пропускаем отправку")
+                else:
+                    # Формируем описание для задачи
+                    issue_summary = f"{request.exception_type or 'Ошибка'}: {request.message or 'Ошибка в коде'}"
+                    if len(issue_summary) > 255:
+                        issue_summary = issue_summary[:252] + "..."
+                    
+                    issue_description = f"""**Ошибка:** {request.exception_type or 'Неизвестная ошибка'}
+
+**Сообщение:** {request.message or 'Нет сообщения'}
+
+**Проект:** {request.project_name}
+
+**Stack Trace:**
+```
+{request.stacktrace[:5000]}
+```
+
+**Предложенное решение:**
+{answer[:10000]}
+"""
+                    
+                    result = tracker_client.create_issue(
+                        queue=request.tracker_queue,
+                        summary=issue_summary,
+                        description=issue_description,
+                        tags=["auto-generated", "stack-trace", request.project_name]
+                    )
+                    tracker_issue_key = result.get("key")
+                    logger.info(f"Решение отправлено в Яндекс Трекер: {tracker_issue_key}")
+            except NotFound as tracker_error:
+                logger.error(f"Задача не найдена при отправке в Яндекс Трекер: {tracker_error}")
+                # Не прерываем выполнение, просто логируем ошибку
+            except TrackerError as tracker_error:
+                logger.error(f"Ошибка Яндекс Трекера при отправке: {tracker_error}")
+                # Не прерываем выполнение, просто логируем ошибку
+            except Exception as tracker_error:
+                logger.error(f"Неожиданная ошибка при отправке в Яндекс Трекер: {tracker_error}", exc_info=True)
+                # Не прерываем выполнение, просто логируем ошибку
+        
+        return StackTraceResponse(answer=answer, tracker_issue_key=tracker_issue_key)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Ошибка при обработке stack trace: {e}", exc_info=True)
         raise HTTPException(
@@ -247,7 +323,6 @@ async def clone_repository(request: CloneRepoRequest):
             status_code=500,
             detail=f"Ошибка при клонировании репозитория: {str(e)}"
         )
-
 
 
 @app.get("/health")

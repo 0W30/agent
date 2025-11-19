@@ -16,6 +16,7 @@ dependencies = [
     "gitpython>=3.1.40",
     "sentence-transformers>=2.2.0",
     "torch>=2.0.0",
+    "yandex-tracker-client>=2.9",
 ]
 
 [project.scripts]

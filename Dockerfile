@@ -48,10 +48,11 @@ COPY --chown=appuser:appuser . .
 # Переключаемся на непривилегированного пользователя
 USER appuser
 
-# Настраиваем known_hosts для публичных репозиториев
-RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts && \
-    ssh-keyscan -H gitlab.com >> ~/.ssh/known_hosts && \
-    chmod 600 ~/.ssh/known_hosts
+# Создаём known_hosts в /tmp (не будет перезаписан монтированием)
+RUN mkdir -p /tmp/ssh && \
+    ssh-keyscan -H github.com >> /tmp/ssh/known_hosts 2>/dev/null || true && \
+    ssh-keyscan -H gitlab.com >> /tmp/ssh/known_hosts 2>/dev/null || true && \
+    chmod 644 /tmp/ssh/known_hosts
 
 # Открываем порт
 EXPOSE 8000
@@ -60,6 +61,67 @@ EXPOSE 8000
 ENV LOG_LEVEL=INFO
 ENV VECTOR_STORE_PATH=/app/vector_store
 ENV LOG_FILE=/app/logs/app.log
+# GIT_SSH_COMMAND будет установлен в entrypoint скрипте после генерации ключа
 
-# Запускаем приложение
-CMD ["python", "main.py"]
+# Создаём entrypoint скрипт для генерации SSH ключа при запуске
+RUN echo '#!/bin/sh\n\
+set -e\n\
+\n\
+# Создаём директорию для SSH ключей контейнера (стандартное место)\n\
+SSH_DIR="/home/appuser/.ssh"\n\
+mkdir -p "$SSH_DIR"\n\
+chmod 700 "$SSH_DIR"\n\
+\n\
+# Генерируем SSH ключ если его нет\n\
+if [ ! -f "$SSH_DIR/id_rsa" ]; then\n\
+    echo "========================================"\n\
+    echo "Генерация SSH ключа для контейнера..."\n\
+    echo "========================================"\n\
+    ssh-keygen -t rsa -b 4096 -f "$SSH_DIR/id_rsa" -N "" -C "container-generated-key-$(hostname)"\n\
+    chmod 600 "$SSH_DIR/id_rsa"\n\
+    chmod 644 "$SSH_DIR/id_rsa.pub"\n\
+    echo ""\n\
+    echo "✅ SSH ключ сгенерирован!"\n\
+    echo ""\n\
+    echo "📋 Публичный ключ (добавьте его в GitHub/GitLab):"\n\
+    echo "----------------------------------------"\n\
+    cat "$SSH_DIR/id_rsa.pub"\n\
+    echo "----------------------------------------"\n\
+    echo ""\n\
+    echo "💡 Добавьте этот ключ:"\n\
+    echo "   - В GitHub: Settings → SSH and GPG keys → New SSH key"\n\
+    echo "   - В GitLab: Preferences → SSH Keys"\n\
+    echo "   - Или как Deploy Key для конкретного репозитория"\n\
+    echo ""\n\
+fi\n\
+\n\
+# Создаём SSH config файл для автоматического использования ключа\n\
+cat > "$SSH_DIR/config" << EOF\n\
+Host github.com\n\
+    HostName github.com\n\
+    User git\n\
+    IdentityFile $SSH_DIR/id_rsa\n\
+    StrictHostKeyChecking accept-new\n\
+    UserKnownHostsFile /tmp/ssh/known_hosts\n\
+\n\
+Host gitlab.com\n\
+    HostName gitlab.com\n\
+    User git\n\
+    IdentityFile $SSH_DIR/id_rsa\n\
+    StrictHostKeyChecking accept-new\n\
+    UserKnownHostsFile /tmp/ssh/known_hosts\n\
+EOF\n\
+chmod 600 "$SSH_DIR/config"\n\
+\n\
+# Настраиваем GIT_SSH_COMMAND для GitPython\n\
+export GIT_SSH_COMMAND="ssh -F $SSH_DIR/config -o UserKnownHostsFile=/tmp/ssh/known_hosts -o StrictHostKeyChecking=accept-new"\n\
+\n\
+# Экспортируем переменную для всех дочерних процессов\n\
+export SSH_DIR\n\
+\n\
+# Запускаем приложение\n\
+exec python main.py' > /tmp/entrypoint.sh && \
+    chmod +x /tmp/entrypoint.sh
+
+# Запускаем приложение через entrypoint
+CMD ["/tmp/entrypoint.sh"]

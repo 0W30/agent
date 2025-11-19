@@ -251,6 +251,7 @@ requests==2.32.5
     #   requests-toolbelt
     #   tiktoken
     #   transformers
+    #   yandex-tracker-client
 requests-toolbelt==1.0.0
     # via langsmith
 safetensors==0.6.2
@@ -264,7 +265,11 @@ scipy==1.16.3
 sentence-transformers==5.1.2
     # via agent (pyproject.toml)
 setuptools==80.9.0
-    # via torch
+    # via
+    #   torch
+    #   yandex-tracker-client
+six==1.17.0
+    # via yandex-tracker-client
 smmap==5.0.2
     # via gitdb
 sniffio==1.3.1
@@ -334,6 +339,8 @@ websockets==15.0.1
     # via uvicorn
 xxhash==3.6.0
     # via langgraph
+yandex-tracker-client==2.9
+    # via agent (pyproject.toml)
 yarl==1.22.0
     # via aiohttp
 zstandard==0.25.0

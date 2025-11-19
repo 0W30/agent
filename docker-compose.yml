@@ -19,15 +19,25 @@ services:
       # Настройки логирования
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE=${LOG_FILE:-/app/logs/app.log}
+      
+      # Яндекс Трекер (опционально)
+      # OAuth токен можно использовать с cloud_org_id или org_id:
+      - YANDEX_TRACKER_TOKEN=${YANDEX_TRACKER_TOKEN:-}
+      - YANDEX_TRACKER_ORG_ID=${YANDEX_TRACKER_ORG_ID:-}
+      # IAM токен используется только с cloud_org_id:
+      - YANDEX_TRACKER_IAM_TOKEN=${YANDEX_TRACKER_IAM_TOKEN:-}
+      - YANDEX_TRACKER_CLOUD_ORG_ID=${YANDEX_TRACKER_CLOUD_ORG_ID:-}
     volumes:
              # Сохраняем векторную базу данных
-             - ./vector_store:/app/vector_store
+      - ./vector_store:/app/vector_store
              # Сохраняем логи
-             - ./logs:/app/logs
+      - ./logs:/app/logs
              # Сохраняем клонированные репозитории
-             - ./cloned_repos:/app/cloned_repos
-             # SSH ключи (для приватных репозиториев, опционально)
-             - ~/.ssh:/home/appuser/.ssh:ro
+      - ./cloned_repos:/app/cloned_repos
+             # SSH ключ генерируется автоматически внутри контейнера при первом запуске
+             # Публичный ключ будет выведен в логи - добавьте его в GitHub/GitLab
+             # Монтируем директорию для сохранения ключей между перезапусками
+      - ssh_keys:/home/appuser/.ssh
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -37,6 +47,10 @@ services:
       start_period: 40s
     networks:
       - stack-trace-network
+
+volumes:
+  ssh_keys:
+    driver: local
 
 networks:
   stack-trace-network:

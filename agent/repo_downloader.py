@@ -9,6 +9,22 @@ from agent.logger_config import get_logger
 logger = get_logger(__name__)
 
 
+def _setup_git_ssh():
+    """Настраивает GIT_SSH_COMMAND в окружении процесса для GitPython."""
+    if "GIT_SSH_COMMAND" in os.environ and os.environ["GIT_SSH_COMMAND"]:
+        return
+    
+    ssh_dir = Path.home() / ".ssh"
+    ssh_key = ssh_dir / "id_rsa"
+    ssh_config = ssh_dir / "config"
+    
+    if ssh_key.exists():
+        if ssh_config.exists():
+            os.environ["GIT_SSH_COMMAND"] = f"ssh -F {ssh_config} -o UserKnownHostsFile=/tmp/ssh/known_hosts -o StrictHostKeyChecking=accept-new"
+        else:
+            os.environ["GIT_SSH_COMMAND"] = f"ssh -i {ssh_key} -o UserKnownHostsFile=/tmp/ssh/known_hosts -o StrictHostKeyChecking=accept-new"
+
+
 def clone_repo(url: str, branch: str, target_dir: str) -> str:
     """
     Клонирует Git-репозиторий по URL (SSH или HTTPS) в указанную директорию.
@@ -27,6 +43,10 @@ def clone_repo(url: str, branch: str, target_dir: str) -> str:
         ValueError: Если target_dir существует, но не является git-репозиторием
     """
     logger.info(f"Клонирование репозитория: {url}, ветка: {branch}, директория: {target_dir}")
+    
+    # Настраиваем SSH для GitPython перед любыми git операциями
+    _setup_git_ssh()
+    
     target_dir = Path(target_dir).resolve()
     target_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     
@@ -111,6 +131,7 @@ def clone_repo(url: str, branch: str, target_dir: str) -> str:
     else:
         try:
             logger.info(f"Клонирование репозитория в {target_dir}")
+            _setup_git_ssh()
             repo = Repo.clone_from(url, str(target_dir), branch=branch)
             logger.info(f"Репозиторий клонирован: {target_dir}")
             return str(target_dir)
@@ -130,9 +151,19 @@ def clone_repo(url: str, branch: str, target_dir: str) -> str:
                     f"Доступ к репозиторию {url} запрещён. "
                     f"Убедитесь, что репозиторий публичный или у вас есть права доступа."
                 )
-            elif "Permission denied" in error_msg:
+            elif "Permission denied" in error_msg or "publickey" in error_msg.lower():
+                ssh_key_path = Path.home() / ".ssh" / "id_rsa.pub"
+                pub_key_hint = ""
+                if ssh_key_path.exists():
+                    try:
+                        pub_key = ssh_key_path.read_text().strip()
+                        pub_key_hint = f"\n\nПубличный SSH ключ контейнера:\n{pub_key}\n\nДобавьте этот ключ в GitHub/GitLab для доступа к репозиторию."
+                    except Exception:
+                        pass
+                
                 raise GitCommandError(
-                    f"Ошибка прав доступа при клонировании в {target_dir}. Проверьте права на директорию."
+                    f"Ошибка SSH авторизации при клонировании {url}. "
+                    f"Убедитесь, что SSH ключ контейнера добавлен в GitHub/GitLab.{pub_key_hint}"
                 )
             else:
                 raise GitCommandError(f"Ошибка при клонировании репозитория: {error_msg}")
