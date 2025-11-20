@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import List
 
+# Импорты с поддержкой разных версий LangChain
 try:
     from langchain_core.documents import Document
 except ImportError:

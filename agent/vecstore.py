@@ -43,71 +43,24 @@ def create_openrouter_embeddings():
         logger.error("OPENROUTER_API_KEY не установлен")
         raise ValueError("Не указан OPENROUTER_API_KEY. Установите переменную окружения.")
     
-    # Логируем первые и последние символы ключа для отладки (безопасно)
-    if len(api_key) > 10:
-        logger.debug(f"API ключ получен (длина: {len(api_key)}, начало: {api_key[:5]}...)")
-    else:
-        logger.warning("API ключ слишком короткий, возможно ошибка")
-    
     # Получаем модель эмбеддингов
-    # OpenRouter требует формат "openai/text-embedding-ada-002" (с префиксом)
     default_model = "qwen/qwen3-embedding-8b"
     model = os.getenv("OPENROUTER_EMBEDDING_MODEL", default_model)
     
-    # Если модель указана без префикса, добавляем префикс openai/
-    if not model.startswith(("openai/", "anthropic/", "cohere/", "huggingface/")):
-        if "embedding" in model.lower() or "ada" in model.lower():
-            model = f"openai/{model}"
-            logger.info(f"Модель автоматически дополнена префиксом: {model}")
-    
     logger.info(f"Создание эмбеддингов через OpenRouter API, модель: {model}")
     
-    # OpenRouter использует OpenAI-совместимый API
-    # Важно: модель должна быть с префиксом "openai/" для OpenRouter
-    # Пробуем разные варианты инициализации для совместимости
-    embeddings = None
-    last_error = None
-    
+    # Создаём эмбеддинги через OpenRouter API
     try:
-        # Вариант 1: Для новых версий LangChain (langchain-openai)
-        # Используем model с префиксом openai/
         embeddings = OpenAIEmbeddings(
             openai_api_key=api_key,
             openai_api_base="https://openrouter.ai/api/v1",
-            model=model  # Модель с префиксом openai/text-embedding-ada-002
+            model=model
         )
-        logger.debug("Эмбеддинги созданы через openai_api_key параметр")
-    except (TypeError, Exception) as e:
-        last_error = e
-        logger.debug(f"Попытка 1 не удалась: {e}, пробуем другой вариант")
-        try:
-            # Вариант 2: Альтернативный вариант для новых версий
-            embeddings = OpenAIEmbeddings(
-                api_key=api_key,
-                base_url="https://openrouter.ai/api/v1",
-                model=model
-            )
-            logger.debug("Эмбеддинги созданы через api_key параметр")
-        except (TypeError, Exception) as e2:
-            last_error = e2
-            logger.debug(f"Попытка 2 не удалась: {e2}, пробуем старый вариант")
-            try:
-                # Вариант 3: Для старых версий LangChain
-                embeddings = OpenAIEmbeddings(
-                    openai_api_key=api_key,
-                    openai_api_base="https://openrouter.ai/api/v1",
-                    model_name=model
-                )
-                logger.debug("Эмбеддинги созданы через model_name параметр")
-            except (TypeError, Exception) as e3:
-                last_error = e3
-                logger.error(f"Все попытки создания эмбеддингов не удались. Последняя ошибка: {e3}")
-                raise ValueError(f"Не удалось создать объект эмбеддингов: {e3}")
-    
-    if embeddings is None:
-        raise ValueError(f"Не удалось создать объект эмбеддингов. Последняя ошибка: {last_error}")
-    
-    return embeddings
+        return embeddings
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Ошибка при создании эмбеддингов: {error_msg}")
+        raise ValueError(f"Не удалось создать объект эмбеддингов: {error_msg}") from e
 
 
 def create_vector_store(docs: list[Document], path: str = "./vector_store") -> FAISS:
@@ -141,17 +94,7 @@ def create_vector_store(docs: list[Document], path: str = "./vector_store") -> F
     except ValueError as e:
         error_msg = str(e)
         if "No embedding data received" in error_msg:
-            used_model = os.getenv('OPENROUTER_EMBEDDING_MODEL', 'text-embedding-ada-002')
-            logger.error(
-                f"OpenRouter API не вернул данные эмбеддингов. "
-                f"Используемая модель: {used_model}\n"
-                "Возможные причины:\n"
-                "1. Модель не поддерживается OpenRouter для эмбеддингов\n"
-                "2. Проблемы с API ключом или авторизацией\n"
-                "3. OpenRouter требует специальные заголовки или формат запроса\n"
-                "4. Превышен лимит запросов к API\n"
-                "Рекомендация: Проверьте документацию OpenRouter для списка поддерживаемых моделей эмбеддингов"
-            )
+            used_model = os.getenv('OPENROUTER_EMBEDDING_MODEL', 'qwen/qwen3-embedding-8b')
         raise ValueError(f"Ошибка при создании векторной базы: {error_msg}") from e
     except Exception as e:
         logger.error(f"Неожиданная ошибка при создании векторной базы: {e}", exc_info=True)
