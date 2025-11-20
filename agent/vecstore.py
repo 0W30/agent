@@ -51,7 +51,7 @@ def create_openrouter_embeddings():
     
     # Получаем модель эмбеддингов
     # OpenRouter требует формат "openai/text-embedding-ada-002" (с префиксом)
-    default_model = "openai/text-embedding-ada-002"
+    default_model = "qwen/qwen3-embedding-8b"
     model = os.getenv("OPENROUTER_EMBEDDING_MODEL", default_model)
     
     # Если модель указана без префикса, добавляем префикс openai/

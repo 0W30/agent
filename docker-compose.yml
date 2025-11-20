@@ -10,7 +10,7 @@ services:
       # OpenRouter API ключ (используется для эмбеддингов и LLM)
       # Установите через .env файл или переменную окружения
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-ada-002}
+      - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
       - OPENROUTER_LLM_MODEL=${OPENROUTER_LLM_MODEL:-qwen/qwen-2.5-72b-instruct}
       
       # Настройки векторной базы
