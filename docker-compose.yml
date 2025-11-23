@@ -28,12 +28,12 @@ services:
       - YANDEX_TRACKER_IAM_TOKEN=${YANDEX_TRACKER_IAM_TOKEN:-}
       - YANDEX_TRACKER_CLOUD_ORG_ID=${YANDEX_TRACKER_CLOUD_ORG_ID:-}
     volumes:
-             # Сохраняем векторную базу данных
-      - ./vector_store:/app/vector_store
-             # Сохраняем логи
-      - ./logs:/app/logs
-             # Сохраняем клонированные репозитории
-      - ./cloned_repos:/app/cloned_repos
+             # Сохраняем векторную базу данных (используем named volume для избежания проблем с правами)
+      - vector_store:/app/vector_store
+             # Сохраняем логи (используем named volume для избежания проблем с правами)
+      - logs:/app/logs
+             # Сохраняем клонированные репозитории (используем named volume для избежания проблем с правами)
+      - cloned_repos:/app/cloned_repos
              # SSH ключ генерируется автоматически внутри контейнера при первом запуске
              # Публичный ключ будет выведен в логи - добавьте его в GitHub/GitLab
              # Монтируем директорию для сохранения ключей между перезапусками
@@ -50,6 +50,12 @@ services:
 
 volumes:
   ssh_keys:
+    driver: local
+  vector_store:
+    driver: local
+  logs:
+    driver: local
+  cloned_repos:
     driver: local
 
 networks:

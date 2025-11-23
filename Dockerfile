@@ -113,6 +113,11 @@ Host gitlab.com\n\
 EOF\n\
 chmod 600 "$SSH_DIR/config"\n\
 \n\
+# Создаём директории с правильными правами (для named volumes это не требуется, но на всякий случай)\n\
+for dir in /app/cloned_repos /app/vector_store /app/logs; do\n\
+    mkdir -p "$dir" 2>/dev/null || true\n\
+done\n\
+\n\
 # Настраиваем GIT_SSH_COMMAND для GitPython\n\
 export GIT_SSH_COMMAND="ssh -F $SSH_DIR/config -o UserKnownHostsFile=/tmp/ssh/known_hosts -o StrictHostKeyChecking=accept-new"\n\
 \n\
