@@ -198,6 +198,7 @@ async def resolve_stack_trace(request: StackTraceRequest):
                     detail="Для отправки в Яндекс Трекер необходимо указать tracker_queue"
                 )
             
+            logger.info("Начало отправки ответа в Яндекс Трекер...")
             try:
                 tracker_client = create_tracker_client()
                 if not tracker_client:
@@ -216,11 +217,11 @@ async def resolve_stack_trace(request: StackTraceRequest):
 
 **Stack Trace:**
 ```
-{request.stacktrace[:5000]}
+{request.stacktrace}
 ```
 
 **Предложенное решение:**
-{answer[:10000]}
+{answer}
 """
                     
                     result = tracker_client.create_issue(
