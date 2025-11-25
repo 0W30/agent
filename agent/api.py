@@ -1,5 +1,6 @@
 """FastAPI приложение для обработки stack trace."""
 import os
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -177,8 +178,15 @@ async def resolve_stack_trace(request: StackTraceRequest):
     
     try:
         # Используем resolve_error для обработки stack trace
+        # КРИТИЧНО: запускаем в executor, чтобы не блокировать event loop Uvicorn
+        # Это предотвращает перезапуск приложения при долгих запросах к LLM
         logger.debug(f"Длина stack trace: {len(full_trace)} символов")
-        answer = resolve_error(trace=full_trace, vector_store=project_vector_store)
+        logger.info("Запуск resolve_error в thread pool executor (не блокирует event loop)")
+        answer = await asyncio.to_thread(
+            resolve_error,
+            trace=full_trace,
+            vector_store=project_vector_store
+        )
         logger.info("Stack trace успешно обработан")
         
         # Отправка в Яндекс Трекер, если запрошено
