@@ -5,13 +5,13 @@ services:
       dockerfile: Dockerfile
     container_name: stack-trace-resolver
     ports:
-      - "${API_PORT:-8003}:8000"
+      - "${API_PORT}:8000"
     environment:
       # OpenRouter API ключ (используется для эмбеддингов и LLM)
       # Установите через .env файл или переменную окружения
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - OPENROUTER_EMBEDDING_MODEL=${OPENROUTER_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
-      - OPENROUTER_LLM_MODEL=${OPENROUTER_LLM_MODEL:-qwen/qwen-2.5-72b-instruct}
+      - OPENROUTER_LLM_MODEL=${OPENROUTER_LLM_MODEL:-qwen/qwen3-vl-30b-a3b-thinking}
       
       # Настройки векторной базы
       - VECTOR_STORE_PATH=${VECTOR_STORE_PATH:-/app/vector_store}

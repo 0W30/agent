@@ -1,7 +1,5 @@
 # Stack Trace Resolver
 
-Профессиональная система для автоматического разрешения ошибок из stack trace с использованием LangChain, FAISS и LLM.
-
 ## Описание
 
 Система анализирует stack trace Python-приложений, находит релевантные файлы в кодовой базе через векторный поиск и генерирует объяснение ошибки с предложением исправления с помощью LLM.
@@ -88,8 +86,8 @@ docker-compose down -v
 | Переменная | Описание | Обязательная | По умолчанию |
 |-----------|----------|--------------|--------------|
 | `OPENROUTER_API_KEY` | API ключ OpenRouter (для эмбеддингов и LLM) | Да | - |
-| `OPENROUTER_EMBEDDING_MODEL` | Модель эмбеддингов | Нет | `text-embedding-ada-002` |
-| `OPENROUTER_LLM_MODEL` | Модель LLM | Нет | `openai/gpt-3.5-turbo` |
+| `OPENROUTER_EMBEDDING_MODEL` | Модель эмбеддингов | Нет | `qwen/qwen3-embedding-8b` |
+| `OPENROUTER_LLM_MODEL` | Модель LLM | Нет | `qwen/qwen3-vl-30b-a3b-thinking` |
 | `VECTOR_STORE_PATH` | Путь к векторной базе | Нет | `/app/vector_store` |
 | `LOG_LEVEL` | Уровень логирования | Нет | `INFO` |
 | `LOG_FILE` | Путь к файлу логов | Нет | `/app/logs/app.log` |
@@ -106,28 +104,6 @@ Docker Compose автоматически монтирует:
 - `./logs` → `/app/logs` - логи приложения
 - `./cloned_repos` → `/app/cloned_repos` - клонированные репозитории
 
-**Важно:** Убедитесь, что директории на хосте имеют правильные права доступа:
-
-```bash
-# Создайте директории и установите права доступа
-mkdir -p vector_store logs cloned_repos
-chmod -R 777 vector_store logs cloned_repos
-```
-
-Это необходимо для того, чтобы контейнер мог записывать данные в эти директории.
-
-### Health Check
-
-Сервис включает встроенный health check, который проверяет доступность API каждые 30 секунд.
-
-### Production Deployment
-
-Для production рекомендуется:
-1. Использовать секреты Docker или внешний менеджер секретов
-2. Настроить reverse proxy (nginx, traefik)
-3. Использовать Docker Swarm или Kubernetes для оркестрации
-4. Настроить мониторинг и алертинг
-
 ## Возможности
 
 - ✅ Клонирование Git-репозиториев по SSH или HTTPS
@@ -140,117 +116,7 @@ chmod -R 777 vector_store logs cloned_repos
 - ✅ REST API на FastAPI
 - ✅ Профессиональное логирование
 
-## Установка
-
-### Локальная установка (без Docker)
-
-1. Клонируйте репозиторий или используйте существующий проект
-
-2. Установите зависимости:
-
-**Вариант 1: Используя uv (рекомендуется):**
-```bash
-uv pip install -e .
-```
-
-**Вариант 2: Используя pip:**
-```bash
-# Сгенерируйте requirements.txt из pyproject.toml (если используете uv)
-uv pip compile pyproject.toml -o requirements.txt
-
-# Установите зависимости
-pip install -r requirements.txt
-```
-
-3. Настройте переменные окружения:
-```bash
-export OPENROUTER_API_KEY="your-openrouter-api-key"
-```
-
-Опционально:
-```bash
-export OPENROUTER_EMBEDDING_MODEL="text-embedding-ada-002"
-export OPENROUTER_LLM_MODEL="openai/gpt-3.5-turbo"
-export VECTOR_STORE_PATH="./vector_store"
-export LOG_LEVEL="INFO"
-export LOG_FILE="logs/app.log"
-```
-
 ## Использование
-
-### 1. Клонирование и индексация репозитория
-
-```python
-from agent.repo_downloader import clone_repo
-from agent.indexer import extract_python_files
-from agent.vecstore import create_vector_store
-
-# Клонируем репозиторий
-repo_path = clone_repo(
-    ssh_url="git@github.com:user/repo.git",
-    branch="main",
-    target_dir="./cloned_repos/repo"
-)
-
-# Индексируем Python-файлы
-documents = extract_python_files(repo_path)
-
-# Создаём векторную базу
-vector_store = create_vector_store(documents, path="./vector_store")
-```
-
-### 2. Разрешение ошибки из stack trace
-
-```python
-from agent.vecstore import load_vector_store
-from agent.resolver import resolve_error
-
-# Загружаем векторную базу
-vector_store = load_vector_store(path="./vector_store")
-
-# Разрешаем ошибку
-stack_trace = """
-Traceback (most recent call last):
-  File "/path/to/file.py", line 42, in function_name
-    result = some_function()
-  File "/path/to/other_file.py", line 10, in some_function
-    return value / 0
-ZeroDivisionError: division by zero
-"""
-
-answer = resolve_error(trace=stack_trace, vector_store=vector_store)
-print(answer)
-```
-
-### 3. Запуск API сервера
-
-```bash
-python main.py
-```
-
-Или через uvicorn:
-```bash
-uvicorn agent.api:app --reload --host 0.0.0.0 --port 8000
-```
-
-API будет доступен по адресу: `http://localhost:8000`
-
-### Настройка директорий
-
-**Важно:** Создайте директории на хосте перед запуском контейнера:
-
-```bash
-mkdir -p logs vector_store cloned_repos
-chmod -R 777 logs vector_store cloned_repos
-```
-
-Это необходимо для того, чтобы контейнер мог записывать данные в эти директории.
-
-### SSH настройка
-
-Для публичных репозиториев SSH ключи не требуются. Контейнер автоматически настроен для работы с GitHub и GitLab по SSH.
-
-**Для приватных репозиториев:** Если вам нужно клонировать приватные репозитории, добавьте SSH ключи в volume монтирования или настройте их вручную.
 
 ### 4. Использование API
 
@@ -381,116 +247,4 @@ curl -X POST "http://localhost:8000/resolve" \
 - Запуск: `python main.py` или `uvicorn agent.api:app`
 
 ## Логирование
-
-Система использует профессиональное логирование с настраиваемыми уровнями:
-
-- `DEBUG` - детальная информация для отладки
-- `INFO` - общая информация о работе системы
-- `WARNING` - предупреждения
-- `ERROR` - ошибки
-- `CRITICAL` - критические ошибки
-
-Логи записываются в консоль и опционально в файл (настраивается через `LOG_FILE`).
-
-## Переменные окружения
-
-| Переменная | Описание | Обязательная | По умолчанию |
-|-----------|----------|--------------|--------------|
-| `OPENROUTER_API_KEY` | API ключ OpenRouter для эмбеддингов | Да | - |
-| `OPENROUTER_LLM_MODEL` | Модель LLM через OpenRouter | Нет | `openai/gpt-3.5-turbo` |
-| `OPENROUTER_EMBEDDING_MODEL` | Модель эмбеддингов | Нет | `text-embedding-ada-002` |
-| `VECTOR_STORE_PATH` | Путь к векторной базе | Нет | `./vector_store` |
-| `LOG_LEVEL` | Уровень логирования | Нет | `INFO` |
-| `LOG_FILE` | Путь к файлу логов | Нет | `logs/app.log` |
-| `YANDEX_TRACKER_TOKEN` | OAuth токен для Яндекс Трекера (обычный режим) | Нет (для интеграции с Трекером) | - |
-| `YANDEX_TRACKER_ORG_ID` | ID организации в Яндекс Трекере (обычный режим) | Нет (для интеграции с Трекером) | - |
-| `YANDEX_TRACKER_IAM_TOKEN` | IAM токен для Яндекс 360 для бизнеса | Нет (для Яндекс 360) | - |
-| `YANDEX_TRACKER_CLOUD_ORG_ID` | Cloud ID организации в Яндекс 360 | Нет (для Яндекс 360) | - |
-
-## Требования
-
-- Python >= 3.10
-- Все зависимости указаны в `pyproject.toml`
-- Для генерации `requirements.txt`: `uv` (опционально, если используете pip)
-
-### Генерация requirements.txt
-
-Если вы используете `uv` для управления зависимостями, сгенерируйте `requirements.txt` для совместимости с `pip`:
-
-```bash
-uv pip compile pyproject.toml -o requirements.txt
-```
-
-Этот файл используется в Dockerfile для установки зависимостей через `pip`.
-
-## Интеграция с Яндекс Трекером
-
-Система поддерживает автоматическую отправку решений в Яндекс Трекер. Это позволяет автоматически создавать задачи для исправления найденных ошибок.
-
-### Настройка
-
-1. **Получите OAuth токен:**
-   - Перейдите в [Яндекс Трекер](https://tracker.yandex.ru)
-   - Настройки → OAuth-токены → Создать токен
-   - Скопируйте токен
-
-2. **Найдите ID организации:**
-   - В настройках организации в Яндекс Трекере
-   - Или используйте API для получения информации об организации
-
-3. **Установите переменные окружения:**
-
-   **Для обычного Яндекс Трекера:**
-   ```bash
-   export YANDEX_TRACKER_TOKEN="ваш-oauth-токен"
-   export YANDEX_TRACKER_ORG_ID="ваш-id-организации"
-   ```
-
-   **Для Яндекс 360 для бизнеса:**
-   ```bash
-   export YANDEX_TRACKER_IAM_TOKEN="ваш-iam-токен"
-   export YANDEX_TRACKER_CLOUD_ORG_ID="ваш-cloud-id-организации"
-   ```
-
-   Или в `.env` файле:
-   ```env
-   # Для обычного Трекера:
-   YANDEX_TRACKER_TOKEN=ваш-oauth-токен
-   YANDEX_TRACKER_ORG_ID=ваш-id-организации
-   
-   # ИЛИ для Яндекс 360:
-   YANDEX_TRACKER_IAM_TOKEN=ваш-iam-токен
-   YANDEX_TRACKER_CLOUD_ORG_ID=ваш-cloud-id-организации
-   ```
-
-   **Примечание:** Используйте либо обычный режим (TOKEN + ORG_ID), либо режим Яндекс 360 (IAM_TOKEN + CLOUD_ORG_ID). Режим Яндекс 360 имеет приоритет, если установлены оба набора переменных.
-
-### Использование
-
-#### Автоматическая отправка при разрешении ошибки
-
-При вызове `/resolve` установите `send_to_tracker: true` и укажите `tracker_queue`:
-
-```json
-{
-  "stacktrace": "...",
-  "project_name": "my-project",
-  "send_to_tracker": true,
-  "tracker_queue": "TEST"
-}
-```
-
-Система автоматически создаст задачу в указанной очереди с:
-- Кратким описанием (summary) на основе типа ошибки
-- Подробным описанием (description) с stack trace и предложенным решением
-- Тегами: `auto-generated`, `stack-trace`, и имя проекта
-
-
-### Документация API Яндекс Трекера
-
-Подробная документация по API доступна на [https://yandex.ru/support/tracker/ru/about-api](https://yandex.ru/support/tracker/ru/about-api)
-
-## Лицензия
-
-MIT
 
